@@ -5,6 +5,8 @@
 import odl
 import numpy as np
 import scipy
+from tqdm.auto import tqdm
+from skimage import io as skio
 
 import dart_ops as DART_stuff
 
@@ -15,7 +17,8 @@ import dart_ops as DART_stuff
 # Discrete reconstruction space: discretized functions on the rectangle
 # [-20, 20]^2 with 300 samples per dimension.
 reco_space = odl.uniform_discr(
-    min_pt=[-20, -20], max_pt=[20, 20], shape=[256, 256], dtype='float64')
+    min_pt=[-20, -20], max_pt=[20, 20], shape=[256, 256], dtype="float64"
+)
 
 # Make a parallel beam geometry with flat detector
 # Angles: uniformly spaced, n = 18, min = 0, max = pi
@@ -25,12 +28,14 @@ detector_partition = odl.uniform_partition(-30, 30, 450)
 geometry = odl.tomo.Parallel2dGeometry(angle_partition, detector_partition)
 
 # Ray transform (= forward projection). We use ASTRA CUDA backend.
-ray_trafo = odl.tomo.RayTransform(reco_space, geometry, impl='astra_cuda')
+ray_trafo = odl.tomo.RayTransform(reco_space, geometry, impl="astra_cuda")
 
 # Create a phantom
-image = np.rot90(scipy.misc.imread(
-        '/home/aringh/git/odl-private/odl/solvers/discrete/phantom_3.png'), -1)
-phantom = reco_space.element(image)/255
+image = np.rot90(
+    skio.imread("phantom_3.png"),
+    -1,
+)
+phantom = reco_space.element(image) / 255
 
 # Create edge-detection and threshold operators
 thresholds = [0.25, 0.75]
@@ -63,27 +68,26 @@ data += odl.phantom.white_noise(ray_trafo.range) * np.mean(data) * 0.1
 x = reco_space.one()
 odl.solvers.conjugate_gradient_normal(ray_trafo, x, data, niter=5)
 
-x.show('Intial reconstruction guess')
+x.show("Intial reconstruction guess")
 
 x_thresholded = threshold_op(x)
-x_thresholded.show('Initial thresholded guess')
+x_thresholded.show("Initial thresholded guess")
 
 callback1 = odl.solvers.CallbackShow()
 callback2 = odl.solvers.CallbackShow()
 
 
-for i in range(50):
-    print('Itertion {}'.format(i))
+for i in tqdm(range(50), desc="Iteration:"):
     x_edge = edge_op(x_thresholded)
     callback1(x_edge)
 
     # Random part of DART
-    x_edge = np.maximum(x_edge,
-                        np.float32(np.random.uniform(size=reco_space.shape) >
-                                   0.95))
+    x_edge = np.maximum(
+        x_edge, np.float32(np.random.uniform(size=reco_space.shape) > 0.95)
+    )
 
     free_op = odl.MultiplyOperator(x_edge)
-    fix_op = odl.MultiplyOperator(1-x_edge)
+    fix_op = odl.MultiplyOperator(1 - x_edge)
 
     free_data = data - (ray_trafo * fix_op)(x_thresholded)
 
@@ -98,7 +102,7 @@ for i in range(50):
     x_thresholded = threshold_op(x)
     callback2(x_thresholded)
 
-x_thresholded.show('Final DART reconstruction')
+x_thresholded.show("Final DART reconstruction")
 
 
 ###############################################################################
@@ -117,14 +121,15 @@ g = [g_l2sq, g_l1]
 ray_norm = odl.power_method_opnorm(ray_trafo)
 grad_norm = odl.power_method_opnorm(grad)
 
-sigma = [1 / ray_norm**2, 1 / grad_norm**2]
+sigma = [1 / ray_norm ** 2, 1 / grad_norm ** 2]
 tau = 1.0
 
-callback = (odl.solvers.CallbackPrintIteration())
+callback = odl.solvers.CallbackPrintIteration()
 
 x_tv = reco_space.zero()
 
-odl.solvers.douglas_rachford_pd(x=x_tv, f=f, g=g, L=lin_ops, tau=tau,
-                                sigma=sigma, niter=2000, callback=callback)
+odl.solvers.douglas_rachford_pd(
+    x=x_tv, f=f, g=g, L=lin_ops, tau=tau, sigma=sigma, niter=2000, callback=callback
+)
 
-x_tv.show('TV-reconstruction with nonnegativity')
+x_tv.show("TV-reconstruction with nonnegativity")
